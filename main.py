@@ -3,12 +3,13 @@ import matplotlib.animation as animation
 import networkx as nx
 
 from traffic_sim.road import Road
+from traffic_sim.junction import Junction
 from traffic_sim.router import Router
 from traffic_sim.source import TrafficSource
 from traffic_sim.sink import Sink
 from traffic_sim.engine import SimulationEngine
 
-# graph of road network
+# -------------------- NETWORK --------------------
 pos = {
     0:(0,0),
     1:(2,3), 2:(4,3), 3:(6,3),
@@ -30,22 +31,22 @@ edges = edges + [(v,u) for (u,v) in edges]
 G = nx.DiGraph()
 G.add_edges_from(edges)
 
+roads = {(u,v): Road(u,v, capacity=3) for (u,v) in edges}
+junctions = {n: Junction(n, max_throughput=1) for n in pos}
+
 nodes = list(pos.keys())
-
-roads = {(u,v): Road(u,v) for (u,v) in edges}
-
 color_map = {n: plt.cm.tab10(n % 10) for n in nodes}
 
 sources = nodes[:4]
 sinks = nodes[-4:]
 
-router = Router(G, roads)
-source = TrafficSource(sources, sinks, router, roads, color_map)
+router = Router(G)
+source = TrafficSource(sources, sinks, router, color_map)
 sink = Sink()
 
-engine = SimulationEngine(roads, source, sink)
+engine = SimulationEngine(roads, junctions, source, sink)
 
-#anim
+# -------------------- ANIMATION --------------------
 fig, ax = plt.subplots()
 
 def animate(frame):
@@ -58,24 +59,42 @@ def animate(frame):
         f"Active: {len(engine.vehicles)} | Done: {sink.completed} | AvgTime: {avg_time:.1f} | AvgWait: {avg_wait:.1f}"
     )
 
-    for (u,v),r in roads.items():
+    # roads
+    for (u,v) in roads:
         x1,y1 = pos[u]
         x2,y2 = pos[v]
         ax.plot([x1,x2],[y1,y2],'black',alpha=0.2)
 
-    for v in engine.vehicles:
-        p = v.position(pos)
-        if p:
-            ax.scatter(p[0], p[1], color=v.color, s=60)
+    # vehicles
+    for road in roads.values():
+        for v in road.vehicles:
+            u = v.path[v.edge_index]
+            w = v.path[v.edge_index + 1]
 
+            x1,y1 = pos[u]
+            x2,y2 = pos[w]
+
+            x = x1 + (x2 - x1) * v.progress
+            y = y1 + (y2 - y1) * v.progress
+
+            ax.scatter(x, y, color=v.color, s=60)
+
+    # queues
+    for j in junctions.values():
+        x,y = pos[j.id]
+        for i, v in enumerate(j.queue):
+            ax.scatter(x, y + 0.35*i, color=v.color, s=40)
+
+    # nodes
     for n,(x,y) in pos.items():
         ax.scatter(x,y,color='white',edgecolors='black',s=300)
         ax.text(x,y,str(n),ha='center',va='center')
 
     ax.axis('off')
 
-ani = animation.FuncAnimation(fig, animate, interval=60)
+
+ani = animation.FuncAnimation(fig, animate, frames=300, interval=60)
+
 plt.show()
 
-print("\nFINAL STATS")
 print("Throughput:", sink.completed)
