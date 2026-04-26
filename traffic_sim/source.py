@@ -1,24 +1,20 @@
-import random
-from .vehicle import Vehicle
+import numpy as np
 
-class TrafficSource:
-    def __init__(self, sources, sinks, router, color_map):
-        self.sources = sources
-        self.sinks = sinks
-        self.router = router
-        self.color_map = color_map
+class FlowGenerator:
+    """Produces vehicles at a node using either Poisson or fixed-rate generation."""
 
-    def spawn(self):
-        if random.random() < 0.2:
-            src = random.choice(self.sources)
-            dest = random.choice(self.sinks)
+    def __init__(self, sid, node_id, targets, intensity=0.3, pattern='poisson'):
+        self.sid = sid
+        self.node_id = node_id
+        self.targets = targets          # list of destination node IDs
+        self.intensity = intensity      # rate parameter
+        self.pattern = pattern          # 'poisson' or 'constant'
 
-            if src == dest:
-                return None
+    def spawn(self, t_now):
+        """Returns a list of destination IDs for newly created vehicles."""
+        if self.pattern == 'poisson':
+            count = np.random.poisson(self.intensity)
+        else:
+            count = max(0, int(self.intensity))
 
-            path = self.router.choose_path(src, dest)
-            if not path or len(path) < 2:
-                return None
-
-            return Vehicle(src, dest, path, self.color_map[dest])
-        return None
+        return [np.random.choice(self.targets) for _ in range(count)]

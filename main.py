@@ -1,100 +1,95 @@
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import networkx as nx
+import numpy as np
 
-from traffic_sim.road import Road
-from traffic_sim.junction import Junction
-from traffic_sim.router import Router
-from traffic_sim.source import TrafficSource
-from traffic_sim.sink import Sink
+np.random.seed(42)
+
+from traffic_sim.components import Road, Junction
+from traffic_sim.source import FlowGenerator
+from traffic_sim.sink import Collector
+from traffic_sim.router import Network
 from traffic_sim.engine import SimulationEngine
+from traffic_sim.anim import SimulationAnimator
 
-# -------------------- NETWORK --------------------
-pos = {
-    0:(0,0),
-    1:(2,3), 2:(4,3), 3:(6,3),
-    4:(2,0), 5:(4,0), 6:(6,0),
-    7:(2,-3), 8:(4,-3), 9:(6,-3),
-    10:(8,0)
-}
 
-edges = [
-    (0,1),(1,2),(2,3),(3,10),
-    (0,4),(4,5),(5,6),(6,10),
-    (0,7),(7,8),(8,9),(9,10),
-    (1,4),(4,7),(2,5),(5,8),(3,6),(6,9),
-    (1,5),(2,6),(4,8),(5,9)
-]
+SIM_STEPS   = 150
+TIME_STEP   = 1.0
+SPEED       = 0.18
 
-edges = edges + [(v,u) for (u,v) in edges]
+GEN_RATE    = 0.4
+GEN_MODE    = 'poisson'
 
-G = nx.DiGraph()
-G.add_edges_from(edges)
+ROUTE_WEIGHT = 3.0
 
-roads = {(u,v): Road(u,v, capacity=3) for (u,v) in edges}
-junctions = {n: Junction(n, max_throughput=1) for n in pos}
 
-nodes = list(pos.keys())
-color_map = {n: plt.cm.tab10(n % 10) for n in nodes}
+def create_topology():
 
-sources = nodes[:4]
-sinks = nodes[-4:]
+    net = Network()
 
-router = Router(G)
-source = TrafficSource(sources, sinks, router, color_map)
-sink = Sink()
+    node_data = [
+        (0, 'source', 0, 3),
+        (1, 'intersection', 2, 5),
+        (2, 'intersection', 2, 1),
+        (3, 'intersection', 4, 6),
+        (4, 'intersection', 4, 3),
+        (5, 'intersection', 6, 4),
+        (6, 'sink', 8, 6),
+        (7, 'sink', 8, 2),
+    ]
 
-engine = SimulationEngine(roads, junctions, source, sink)
+    for nid, kind, x, y in node_data:
+        net.add_junction(Junction(nid, kind, x, y))
 
-# -------------------- ANIMATION --------------------
-fig, ax = plt.subplots()
+    edge_data = [
+        ('A', 0, 1, 5, 2.5),
+        ('B', 0, 2, 5, 2.5),
+        ('C', 1, 3, 4, 2.0),
+        ('D', 2, 4, 4, 2.0),
+        ('E', 3, 6, 5, 3.0),
+        ('F', 4, 5, 5, 2.5),
+        ('G', 5, 6, 5, 2.5),
+        ('H', 5, 7, 5, 2.5),
+        ('I', 1, 4, 3, 3.2),
+    ]
 
-def animate(frame):
-    engine.step()
-    ax.clear()
+    for eid, a, b, cap, length in edge_data:
+        net.add_road(Road(eid, a, b, cap, length))
 
-    avg_time, avg_wait = sink.stats()
-
-    ax.set_title(
-        f"Active: {len(engine.vehicles)} | Done: {sink.completed} | AvgTime: {avg_time:.1f} | AvgWait: {avg_wait:.1f}"
+    net.add_source(
+        FlowGenerator(
+            sid='GEN0',
+            node_id=0,
+            targets=[6, 7],
+            intensity=GEN_RATE,
+            pattern=GEN_MODE
+        )
     )
 
-    # roads
-    for (u,v) in roads:
-        x1,y1 = pos[u]
-        x2,y2 = pos[v]
-        ax.plot([x1,x2],[y1,y2],'black',alpha=0.2)
+    net.add_sink(Collector('END6', 6))
+    net.add_sink(Collector('END7', 7))
 
-    # vehicles
-    for road in roads.values():
-        for v in road.vehicles:
-            u = v.path[v.edge_index]
-            w = v.path[v.edge_index + 1]
-
-            x1,y1 = pos[u]
-            x2,y2 = pos[w]
-
-            x = x1 + (x2 - x1) * v.progress
-            y = y1 + (y2 - y1) * v.progress
-
-            ax.scatter(x, y, color=v.color, s=60)
-
-    # queues
-    for j in junctions.values():
-        x,y = pos[j.id]
-        for i, v in enumerate(j.queue):
-            ax.scatter(x, y + 0.35*i, color=v.color, s=40)
-
-    # nodes
-    for n,(x,y) in pos.items():
-        ax.scatter(x,y,color='white',edgecolors='black',s=300)
-        ax.text(x,y,str(n),ha='center',va='center')
-
-    ax.axis('off')
+    return net
 
 
-ani = animation.FuncAnimation(fig, animate, frames=300, interval=60)
+if __name__ == "__main__":
 
-plt.show()
+    net = create_topology()
 
-print("Throughput:", sink.completed)
+    engine = SimulationEngine(
+        net,
+        steps=SIM_STEPS,
+        dt=TIME_STEP,
+        speed=SPEED,
+        congestion_weight=ROUTE_WEIGHT
+    )
+
+    engine.run()
+
+    viz = SimulationAnimator(
+        net,
+        engine.frames,
+        engine.metrics,
+        engine.color_map
+    )
+
+    viz.animate(out='output/simulation.gif', fps=10, step=2)
+
+    print("\nOutputs saved in 'output/' directory")

@@ -1,39 +1,243 @@
+import numpy as np
+from .components import Vehicle
+
+
+def _rand_color():
+    return "#{:06x}".format(np.random.randint(0, 0xFFFFFF))
+
+
 class SimulationEngine:
-    def __init__(self, roads, junctions, source, sink):
-        self.roads = roads
-        self.junctions = junctions
-        self.source = source
-        self.sink = sink
-        self.vehicles = []
-        self.tick = 0
+    def __init__(self, network, steps=150, dt=1.0,
+                 speed=0.3, congestion_weight=3.0):
 
-    def step(self):
-        self.tick += 1
+        self.net = network
+        self.steps = steps
+        self.dt = dt
+        self.speed = speed
+        self.weight = congestion_weight
 
-        v = self.source.spawn()
-        if v:
-            self.junctions[v.src].arrive(v)
-            self.vehicles.append(v)
+        self.fleet = []
+        self.time = 0.0
+        self._vid = 0
 
-        # move vehicles on roads
-        for road in self.roads.values():
-            for v in list(road.vehicles):
-                v.progress += 0.04
-                v.time_alive += 1
+        # randomized colors per destination
+        self.color_map = {
+            d: _rand_color()
+            for d in network.collectors.keys()
+        }
 
-                if v.progress >= 1:
-                    road.leave(v)
-                    v.edge_index += 1
+        self.frames = []
 
-                    if v.done():
-                        self.sink.collect(v)
-                        self.vehicles.remove(v)
-                    else:
-                        self.junctions[v.path[v.edge_index]].arrive(v)
-                        v.on_road = False
+        self.metrics = {
+            'spawned': 0,
+            'arrived': 0,
+            'travel': [],
+            'delay': [],
+            'freeflow': [],
+            'stops': [],
+            'edge_load': {eid: [] for eid in network.edges},
+            'edge_queue': {eid: [] for eid in network.edges},
+            'node_delay': {nid: 0.0 for nid in network.nodes},
+            'node_served': {nid: 0 for nid in network.nodes},
+            'node_maxq': {nid: 0 for nid in network.nodes},
+            'active': []
+        }
 
-        # junctions
-        for j in self.junctions.values():
-            for v in j.queue:
-                v.wait_time += 1
-            j.step(self.roads)
+    # ---------- helper ----------
+
+    def _freeflow_time(self, path):
+        total = 0.0
+        for i in range(len(path) - 1):
+            e = self.net.nodes[path[i]].get_road_to(path[i + 1])
+            if e:
+                total += e.length / self.speed
+        return total
+
+    # ---------- spawn ----------
+
+    def _spawn(self):
+        for nid, gen in self.net.generators.items():
+            for dest in gen.spawn(self.time):
+
+                if dest == nid:
+                    continue
+
+                route = self.net.shortest_path(nid, dest)
+                if len(route) < 2:
+                    continue
+
+                v = Vehicle(self._vid, nid, dest,
+                            self.color_map.get(dest, 'gray'))
+
+                v.path_plan = route
+                v.t_start = self.time
+                v.free_flow_time = self._freeflow_time(route)
+                v.stop_count = 0
+
+                self._vid += 1
+                self.metrics['spawned'] += 1
+
+                first = self.net.nodes[route[0]].get_road_to(route[1])
+
+                if first and not first.is_full:
+                    first.on_road.append(v)
+                    v.active_road = first.rid
+                    v.alpha = 0.0
+                    self.fleet.append(v)
+
+    # ---------- movement ----------
+
+    def _move(self):
+        for v in self.fleet:
+            if v.finished:
+                continue
+
+            edge = self.net.edges[v.active_road]
+
+            v.alpha = min(1.0, v.alpha + self.speed / edge.length)
+
+            if v.alpha >= 1.0 and v not in edge.waiting:
+                edge.waiting.append(v)
+                v.stop_count += 1
+
+    # ---------- junction logic ----------
+
+    def _process_nodes(self):
+        for nid, node in self.net.nodes.items():
+
+            total_q = sum(len(r.waiting) for r in node.in_roads)
+            if total_q > self.metrics['node_maxq'][nid]:
+                self.metrics['node_maxq'][nid] = total_q
+
+            # ---- sink ----
+            if nid in self.net.collectors:
+                for r in node.in_roads:
+                    for v in list(r.waiting):
+                        r.waiting.remove(v)
+                        r.on_road.remove(v)
+
+                        self.net.collectors[nid].receive(v, self.time)
+
+                        tt = self.time - v.t_start
+                        self.metrics['travel'].append(tt)
+                        self.metrics['delay'].append(v.delay)
+                        self.metrics['freeflow'].append(v.free_flow_time)
+                        self.metrics['stops'].append(v.stop_count)
+
+                        self.metrics['arrived'] += 1
+                continue
+
+            # ---- scheduling ----
+            road = node.next_active_road()
+
+            if road is None or not road.waiting:
+                for r in node.in_roads:
+                    for v in r.waiting:
+                        v.delay += self.dt
+                        self.metrics['node_delay'][nid] += self.dt
+                continue
+
+            v = road.waiting[0]
+
+            # ---- reroute ----
+            new_path = self.net.congestion_aware_path(
+                nid, v.dst, self.weight
+            )
+            if new_path and len(new_path) >= 2:
+                v.path_plan = new_path
+
+            try:
+                idx = v.path_plan.index(nid)
+            except ValueError:
+                road.waiting.pop(0)
+                continue
+
+            if idx + 1 >= len(v.path_plan):
+                road.waiting.pop(0)
+                road.on_road.remove(v)
+                v.finished = True
+                continue
+
+            nxt = node.get_road_to(v.path_plan[idx + 1])
+
+            if nxt and not nxt.is_full:
+                road.waiting.remove(v)
+                road.on_road.remove(v)
+
+                nxt.on_road.append(v)
+                v.active_road = nxt.rid
+                v.alpha = 0.0
+
+                self.metrics['node_served'][nid] += 1
+            else:
+                for r in node.in_roads:
+                    for qv in r.waiting:
+                        qv.delay += self.dt
+                        self.metrics['node_delay'][nid] += self.dt
+
+    # ---------- snapshot ----------
+
+    def _record(self):
+        state = {}
+
+        for eid, edge in self.net.edges.items():
+            qlen = len(edge.waiting)
+
+            state[eid] = {
+                'occupancy': edge.occupancy,
+                'queue_len': qlen,
+                'count': len(edge.on_road),
+                'capacity': edge.capacity
+            }
+
+            self.metrics['edge_load'][eid].append(edge.occupancy)
+            self.metrics['edge_queue'][eid].append(qlen)
+
+        frame = {'time': self.time, 'vehicles': [], 'edges': state}
+
+        for v in self.fleet:
+            if v.finished:
+                continue
+
+            edge = self.net.edges[v.active_road]
+            a = self.net.nodes[edge.j_from]
+            b = self.net.nodes[edge.j_to]
+
+            if v in edge.waiting:
+                x = a.x + 0.9 * (b.x - a.x)
+                y = a.y + 0.9 * (b.y - a.y)
+                queued = True
+            else:
+                x = a.x + v.alpha * (b.x - a.x)
+                y = a.y + v.alpha * (b.y - a.y)
+                queued = False
+
+            frame['vehicles'].append({
+                'x': x,
+                'y': y,
+                'color': v.color,
+                'dest': v.dst,
+                'queued': queued
+            })
+
+        self.frames.append(frame)
+        self.metrics['active'].append(len(frame['vehicles']))
+
+    # ---------- run ----------
+
+    def run(self):
+        print(f"Running simulation ({self.steps} steps)")
+
+        for step in range(self.steps):
+            self.time = step * self.dt
+
+            self._spawn()
+            self._move()
+            self._process_nodes()
+            self._record()
+
+            if step % 20 == 0:
+                print(f"Step {step:3d} | Active {self.metrics['active'][-1]} | Arrived {self.metrics['arrived']}")
+
+        print(f"Done. Spawned={self.metrics['spawned']} Arrived={self.metrics['arrived']}")
+        return self.metrics

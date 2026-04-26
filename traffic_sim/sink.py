@@ -1,18 +1,12 @@
-class Sink:
-    def __init__(self):
-        self.completed = 0
-        self.total_time = 0
-        self.total_wait = 0
+class Collector:
+    """Receives vehicles that have completed their journey."""
 
-    def collect(self, v):
-        self.completed += 1
-        self.total_time += v.time_alive
-        self.total_wait += v.wait_time
+    def __init__(self, cid, node_id):
+        self.cid = cid
+        self.node_id = node_id
+        self.completed = []
 
-    def stats(self):
-        if self.completed == 0:
-            return 0, 0
-        return (
-            self.total_time / self.completed,
-            self.total_wait / self.completed
-        )
+    def receive(self, veh, t_now):
+        veh.finished = True
+        veh.t_end = t_now
+        self.completed.append(veh)
