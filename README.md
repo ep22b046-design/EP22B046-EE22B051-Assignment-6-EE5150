@@ -77,9 +77,9 @@ The simulator models vehicle movement across a network of junctions connected by
 
 - components.py → Vehicle, Road, Junction definitions  
 - source.py / sink.py → vehicle generation and exit  
-- router.py → path computation (Dijkstra-style)  
+- router.py → path computation (Dijkstra's algorithm)  
 - engine.py → simulation loop and metrics collection  
-- anim.py → visualization (GIF)
+- anim.py → GIF generation
 
 ---
 
