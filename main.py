@@ -82,6 +82,22 @@ if __name__ == "__main__":
     )
 
     engine.run()
+    # ===== FINAL STATISTICS =====
+    m = engine.metrics
+
+    avg_travel = np.mean(m['travel']) if m['travel'] else 0
+    avg_delay  = np.mean(m['delay']) if m['delay'] else 0
+    avg_stops  = np.mean(m['stops']) if m['stops'] else 0
+
+    throughput = m['arrived'] / (SIM_STEPS * TIME_STEP)
+
+    print("\n===== FINAL STATS =====")
+    print(f"Spawned   : {m['spawned']}")
+    print(f"Arrived   : {m['arrived']}")
+    print(f"Throughput: {throughput:.3f} veh/step")
+    print(f"Avg Travel: {avg_travel:.2f}")
+    print(f"Avg Delay : {avg_delay:.2f}")
+    print(f"Avg Stops : {avg_stops:.2f}")
 
     viz = SimulationAnimator(
         net,
