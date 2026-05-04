@@ -21,50 +21,74 @@ ROUTE_WEIGHT = 3.0
 
 
 def create_topology():
-
     net = Network()
 
     node_data = [
-        (0, 'source', 0, 3),
-        (1, 'intersection', 2, 5),
-        (2, 'intersection', 2, 1),
-        (3, 'intersection', 4, 6),
-        (4, 'intersection', 4, 3),
-        (5, 'intersection', 6, 4),
-        (6, 'sink', 8, 6),
-        (7, 'sink', 8, 2),
+        # Top row
+        (0, 'source', 0, 5),        # Source S1, S4 (Top-Left)
+        (1, 'intersection', 3, 5),  # Top-Left Junction
+        (2, 'intersection', 6, 5),  # Top-Right Junction
+        (3, 'sink', 9, 5),          # Sink K2 (Top-Right)
+
+        # Middle row
+        (4, 'source', 0, 3),        # Source S2, S5 (Mid-Left)
+        (5, 'intersection', 3, 3),  # Mid-Left Junction
+        (6, 'intersection', 6, 3),  # Mid-Right Junction
+        (7, 'source', 9, 3),        # Source S3 (Mid-Right)
+
+        # Bottom row
+        (8, 'sink', 0, 1),          # Sink K3, K4 (Bottom-Left)
+        (9, 'intersection', 3, 1),  # Bottom-Left Junction
+        (10, 'intersection', 6, 1), # Bottom-Right Junction
+        (11, 'sink', 9, 1),         # Sink K1, K5 (Bottom-Right)
     ]
 
     for nid, kind, x, y in node_data:
         net.add_junction(Junction(nid, kind, x, y))
 
+    # Define edges (Bi-directional = 2 edges per road segment)
+    # Format: (edge_id, from_node, to_node, capacity, length)
+    CAP = 5     # Default capacity
+    LEN_H = 3.0 # Horizontal road length
+    LEN_V = 2.0 # Vertical road length
+
     edge_data = [
-        ('A', 0, 1, 5, 2.5),
-        ('B', 0, 2, 5, 2.5),
-        ('C', 1, 3, 4, 2.0),
-        ('D', 2, 4, 4, 2.0),
-        ('E', 3, 6, 5, 3.0),
-        ('F', 4, 5, 5, 2.5),
-        ('G', 5, 6, 5, 2.5),
-        ('H', 5, 7, 5, 2.5),
-        ('I', 1, 4, 3, 3.2),
+        # --- Top Row Horizontal ---
+        ('E01_f', 0, 1, CAP, LEN_H), ('E01_b', 1, 0, CAP, LEN_H),
+        ('E12_f', 1, 2, CAP, LEN_H), ('E12_b', 2, 1, CAP, LEN_H),
+        ('E23_f', 2, 3, CAP, LEN_H), ('E23_b', 3, 2, CAP, LEN_H),
+
+        # --- Middle Row Horizontal ---
+        ('E45_f', 4, 5, CAP, LEN_H), ('E45_b', 5, 4, CAP, LEN_H),
+        ('E56_f', 5, 6, CAP, LEN_H), ('E56_b', 6, 5, CAP, LEN_H),
+        ('E67_f', 6, 7, CAP, LEN_H), ('E67_b', 7, 6, CAP, LEN_H),
+
+        # --- Bottom Row Horizontal ---
+        ('E89_f', 8, 9, CAP, LEN_H), ('E89_b', 9, 8, CAP, LEN_H),
+        ('E910_f', 9, 10, CAP, LEN_H), ('E910_b', 10, 9, CAP, LEN_H),
+        ('E1011_f', 10, 11, CAP, LEN_H), ('E1011_b', 11, 10, CAP, LEN_H),
+
+        # --- Left Column Vertical ---
+        ('E15_f', 1, 5, CAP, LEN_V), ('E15_b', 5, 1, CAP, LEN_V),
+        ('E59_f', 5, 9, CAP, LEN_V), ('E59_b', 9, 5, CAP, LEN_V),
+
+        # --- Right Column Vertical ---
+        ('E26_f', 2, 6, CAP, LEN_V), ('E26_b', 6, 2, CAP, LEN_V),
+        ('E610_f', 6, 10, CAP, LEN_V), ('E610_b', 10, 6, CAP, LEN_V),
     ]
 
     for eid, a, b, cap, length in edge_data:
         net.add_road(Road(eid, a, b, cap, length))
 
-    net.add_source(
-        FlowGenerator(
-            sid='GEN0',
-            node_id=0,
-            targets=[6, 7],
-            intensity=GEN_RATE,
-            pattern=GEN_MODE
-        )
-    )
+    all_sinks = [3, 8, 11]
 
-    net.add_sink(Collector('END6', 6))
-    net.add_sink(Collector('END7', 7))
+    net.add_source(FlowGenerator(sid='GEN_S1_S4', node_id=0, targets=all_sinks, intensity=GEN_RATE, pattern=GEN_MODE))
+    net.add_source(FlowGenerator(sid='GEN_S2_S5', node_id=4, targets=all_sinks, intensity=GEN_RATE, pattern=GEN_MODE))
+    net.add_source(FlowGenerator(sid='GEN_S3',    node_id=7, targets=all_sinks, intensity=GEN_RATE, pattern=GEN_MODE))
+
+    net.add_sink(Collector('SINK_K2', 3))
+    net.add_sink(Collector('SINK_K3_K4', 8))
+    net.add_sink(Collector('SINK_K1_K5', 11))
 
     return net
 
