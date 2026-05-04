@@ -1,3 +1,4 @@
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -5,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import LinearSegmentedColormap
 import os
+import math
 
 os.makedirs("output", exist_ok=True)
 
@@ -15,7 +17,6 @@ FLOW_MAP = LinearSegmentedColormap.from_list(
 def _edge_color(v):
     return FLOW_MAP(min(float(v), 1.0))
 
-
 class SimulationAnimator:
     def __init__(self, net, frames, metrics, color_map):
         self.net = net
@@ -25,7 +26,6 @@ class SimulationAnimator:
 
     def _draw_nodes(self, ax):
         for n in self.net.nodes.values():
-
             if n.jid in self.net.collectors:
                 col = '#ff6b6b'
                 label = f'J{n.jid}\nSink'
@@ -46,9 +46,8 @@ class SimulationAnimator:
                     fontweight='bold',
                     zorder=6)
 
-    def animate(self, out='gifs/animation.gif', fps=10, step=2):
-
-        fig, ax = plt.subplots(figsize=(11, 8))
+    def animate(self, out='output/simulation.gif', fps=10, step=2):
+        fig, ax = plt.subplots(figsize=(12, 9))
         fig.patch.set_facecolor('white')
         ax.set_facecolor('#f8f9fa')
 
@@ -66,24 +65,11 @@ class SimulationAnimator:
 
         self._draw_nodes(ax)
 
-        move_pts = ax.scatter([], [], s=50, edgecolors='black', zorder=10)
-        wait_pts = ax.scatter([], [], s=70, marker='s',
-                              edgecolors='black', zorder=11)
-
-        time_text = ax.text(0.02, 0.97, '', transform=ax.transAxes,
-                            fontsize=10, va='top', color='black')
-
-        stats_text = ax.text(0.02, 0.88, '', transform=ax.transAxes,
-                             fontsize=9, va='top', color='black')
-
         frames = self.frames[::step]
+        OFFSET = 0.15 # Must match engine for accurate vehicle tracking
 
         def update(frame):
-
-            # ✅ SAFE CLEAR (this is the ONLY correct way)
             ax.cla()
-
-            # re-setup axis after clearing
             ax.set_facecolor('#f8f9fa')
             ax.set_xticks([])
             ax.set_yticks([])
@@ -94,7 +80,6 @@ class SimulationAnimator:
 
             edge_state = frame.get('edges', {})
 
-            # draw roads
             for e in self.net.edges.values():
                 a = self.net.nodes[e.j_from]
                 b = self.net.nodes[e.j_to]
@@ -103,18 +88,37 @@ class SimulationAnimator:
                 occ = st.get('occupancy', 0)
                 ql = st.get('queue_len', 0)
 
-                ax.plot([a.x, b.x], [a.y, b.y],
-                        color=_edge_color(occ), lw=2)
+                # Find direction
+                dx = b.x - a.x
+                dy = b.y - a.y
+                length = math.hypot(dx, dy)
 
-                mx, my = (a.x+b.x)/2, (a.y+b.y)/2
+                if length == 0:
+                    continue
+                
+                # Apply orthogonal offset
+                nx = -dy / length
+                ny = dx / length
+                
+                x1 = a.x + nx * OFFSET
+                y1 = a.y + ny * OFFSET
+                x2 = b.x + nx * OFFSET
+                y2 = b.y + ny * OFFSET
+
+                ax.plot([x1, x2], [y1, y2],
+                        color=_edge_color(occ), lw=2, zorder=2)
+
+                mx, my = (x1 + x2) / 2, (y1 + y2) / 2
 
                 ax.text(mx, my,
-                        f'{e.rid} | Q:{ql}',
-                        fontsize=7,
+                        f'{e.rid}\nQ:{ql}',
+                        fontsize=6,
                         color='black',
-                        ha='center')
+                        ha='center', va='center',
+                        bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=0.2),
+                        zorder=3)
 
-            # vehicles
+            # Draw vehicles
             mv = [v for v in frame['vehicles'] if not v['queued']]
             qv = [v for v in frame['vehicles'] if v['queued']]
 
@@ -122,16 +126,13 @@ class SimulationAnimator:
                 ax.scatter([v['x'] for v in mv],
                            [v['y'] for v in mv],
                            c=[v['color'] for v in mv],
-                           s=50, edgecolors='black')
+                           s=40, edgecolors='black', zorder=4)
 
             if qv:
                 ax.scatter([v['x'] for v in qv],
                            [v['y'] for v in qv],
                            c=[v['color'] for v in qv],
-                           s=70, marker='s', edgecolors='black')
-
-            # stats
-            total_q = sum(st.get('queue_len', 0) for st in edge_state.values())
+                           s=60, marker='s', edgecolors='black', zorder=4)
 
             ax.text(0.02, 0.97, f'Time: {frame["time"]:.0f}',
                     transform=ax.transAxes, fontsize=10)
